@@ -150,6 +150,7 @@ object MimeRegistry {
         "m3u" to "audio/x-mpegurl", "m3u8" to "audio/x-mpegurl", "pls" to "audio/x-scpls", "xspf" to "application/xspf+xml", "jspf" to "application/jspf+json", "cue" to "application/x-cue",
         "rm" to "application/vnd.rn-realmedia", "rmvb" to "application/vnd.rn-realmedia-vbr",
         "3gp" to "video/3gpp", "3gpp" to "video/3gpp", "3g2" to "video/3gpp2",
+        "avi" to "video/x-msvideo", "mov" to "video/quicktime", "wmv" to "video/x-ms-wmv",
         "mp4" to "video/mp4", "mkv" to "video/x-matroska", "webm" to "video/webm",
         "zip" to "application/zip", "cbz" to "application/zip", "tar" to "application/x-tar", "cbt" to "application/x-tar", "gz" to "application/gzip", "tgz" to "application/gzip",
         "bz2" to "application/x-bzip2", "tbz" to "application/x-bzip2", "tbz2" to "application/x-bzip2", "xz" to "application/x-xz", "txz" to "application/x-xz",
@@ -258,6 +259,7 @@ object MimeRegistry {
         val sniffed = normalize(detected)
         if (!isUnspecified(sniffed)) return sniffed
         val inferred = guess(name)
+        if (stated == "text/plain" && isTextMime(inferred)) return inferred
         if (isUnspecified(stated) || stated in setOf("application/x-archive", "application/x-compressed")) {
             if (!isUnspecified(inferred)) return inferred
             if (isUnspecified(stated)) return inferred
