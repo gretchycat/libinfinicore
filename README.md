@@ -38,3 +38,7 @@ terms continue to apply.
 ## Separation audit update
 
 Original resource types and package names are retained. Core is the owner of the extracted platform support; no classes are copied back into Store. Exception types used by backend implementations are explicit public contracts.
+
+## Compressed format identity
+
+Registered format validators run before generic compressor classification for compressed files/streams. A verified SVGZ image can therefore retain its image identity while arbitrary gzip remains a compressed container. Core continues to depend only on Stream and its declared platform/compression adapters; image validation remains in Canvas through the capability interface.

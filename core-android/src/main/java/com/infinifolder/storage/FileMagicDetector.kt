@@ -141,6 +141,8 @@ object FileMagicDetector {
                 // Check if outer wrapper is compressed (.gz, .bz2, .xz, .zst)
                 val compressor = detectOuterCompressor(header)
                 if (compressor != null) {
+                    registeredIdentity(header, file.name, com.infinifolder.mime.MimeRegistry.guess(file.name), len, null)
+                        ?.let { return@use it }
                     val extension = file.name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                     val innerResult = if (peekCompressedPayload || extension == "vgz") {
                         try {
@@ -208,6 +210,7 @@ object FileMagicDetector {
                 if (prefix.isEmpty()) return null
                 val compressor = detectOuterCompressor(prefix)
                 if (compressor != null) {
+                    registeredIdentity(prefix, fileNameHint, expectedMimeType, resourceLength, null)?.let { return it }
                     val innerResult = try {
                         openCompressedStream(prefix.inputStream(), compressor).use { decIn ->
                             val innerBuf = readUpTo(decIn, 69632)
