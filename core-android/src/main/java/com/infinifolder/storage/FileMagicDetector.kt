@@ -144,18 +144,22 @@ object FileMagicDetector {
                     registeredIdentity(header, file.name, com.infinifolder.mime.MimeRegistry.guess(file.name), len, null)
                         ?.let { return@use it }
                     val extension = file.name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                    val innerResult = if (peekCompressedPayload || extension == "vgz") {
+                    val innerBytes = if (peekCompressedPayload || extension == "vgz" || extension == "wmz") {
                         try {
                             file.inputStream().use { rawIn ->
                                 openCompressedStream(rawIn, compressor).use { decIn ->
-                                    val innerBuf = readUpTo(decIn, 69632)
-                                    detectFromBytes(innerBuf, null, null, null)
+                                    readUpTo(decIn, 69632)
                                 }
                             }
                         } catch (_: Exception) {
                             null
                         }
                     } else null
+                    val innerResult = innerBytes?.let { detectFromBytes(it, null, null, null) }
+
+                    if (extension == "wmz" && innerBytes?.let(::isWmfPayload) == true) {
+                        return@use FileMagicResult("image/wmf", "${compressor.label}-compressed Windows Metafile")
+                    }
 
                     val audioWrapper = extension == "vgz" && innerResult?.mimeType == "audio/x-vgm"
                     if (innerResult != null && (innerResult.isArchiveOrDiscImage || audioWrapper)) {
@@ -211,13 +215,17 @@ object FileMagicDetector {
                 val compressor = detectOuterCompressor(prefix)
                 if (compressor != null) {
                     registeredIdentity(prefix, fileNameHint, expectedMimeType, resourceLength, null)?.let { return it }
-                    val innerResult = try {
+                    val innerBytes = try {
                         openCompressedStream(prefix.inputStream(), compressor).use { decIn ->
-                            val innerBuf = readUpTo(decIn, 69632)
-                            detectFromBytes(innerBuf, null, null)
+                            readUpTo(decIn, 69632)
                         }
                     } catch (_: Throwable) {
                         null
+                    }
+                    val innerResult = innerBytes?.let { detectFromBytes(it, null, null) }
+                    val isWmz = fileNameHint?.substringAfterLast('.', "")?.equals("wmz", true) == true
+                    if (isWmz && innerBytes?.let(::isWmfPayload) == true) {
+                        return FileMagicResult("image/wmf", "${compressor.label}-compressed Windows Metafile")
                     }
                     val audioWrapper = fileNameHint?.substringAfterLast('.', "")?.equals("vgz", true) == true &&
                         innerResult?.mimeType == "audio/x-vgm"
@@ -1296,6 +1304,22 @@ object FileMagicDetector {
             return OuterCompressor.ZSTD
         }
         return null
+    }
+
+    /** WMZ is a gzip-wrapped WMF. Validate its inner header and first record before routing it as an image. */
+    private fun isWmfPayload(bytes: ByteArray): Boolean {
+        val placeable = bytes.size >= 22 && u32le(bytes, 0) == 0x9AC6CDD7L
+        val start = if (placeable) 22 else 0
+        if (bytes.size < start + 24) return false
+        val type = u16le(bytes, start)
+        val headerWords = u16le(bytes, start + 2)
+        val version = u16le(bytes, start + 4)
+        val fileWords = u32le(bytes, start + 6)
+        val maxRecordWords = u32le(bytes, start + 12)
+        if (type !in 1..2 || headerWords != 9 || version !in setOf(0x0100, 0x0300) ||
+            fileWords < 12 || maxRecordWords < 3) return false
+        val firstRecordWords = u32le(bytes, start + 18)
+        return firstRecordWords in 3..(fileWords - headerWords)
     }
 
     private fun openCompressedStream(raw: InputStream, compressor: OuterCompressor): InputStream {

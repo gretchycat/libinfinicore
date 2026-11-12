@@ -4,12 +4,29 @@ import io.github.gretchycat.infinistream.*
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.zip.GZIPOutputStream
 
 class CompressedFormatIdentityTest {
     private fun encoded(text: String) = ByteArrayOutputStream().also {
         GZIPOutputStream(it).use { zip -> zip.write(text.toByteArray()) }
     }.toByteArray()
+    private fun encodedWmf(): ByteArray {
+        val wmf = ByteArray(24)
+        ByteBuffer.wrap(wmf).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putShort(0, 1)
+            putShort(2, 9)
+            putShort(4, 0x0300.toShort())
+            putInt(6, 12)
+            putInt(12, 3)
+            putInt(18, 3)
+            putShort(22, 0)
+        }
+        return ByteArrayOutputStream().also { output ->
+            GZIPOutputStream(output).use { it.write(wmf) }
+        }.toByteArray()
+    }
     private fun handler() = object : CapabilityHandler {
         override val descriptor = HandlerDescriptor("test.compressed-svg", "test", "Test compressed image validator",
             listOf(FormatSupport(setOf("image/svg+xml"), setOf("svgz"))), setOf(Operations.IDENTIFY))
@@ -32,6 +49,21 @@ class CompressedFormatIdentityTest {
         RuntimeCapabilities.installed().register(handler()).use {
             val bytes = encoded("ordinary text")
             assertEquals("application/gzip", FileMagicDetector.detectFromStream("fake.svgz", "image/svg+xml", bytes.size.toLong()) { bytes.inputStream() }?.mimeType)
+            assertEquals("application/gzip", FileMagicDetector.detectFromStream("not-a-wmf.wmz", "image/wmf", bytes.size.toLong()) { bytes.inputStream() }?.mimeType)
+        }
+    }
+
+    @Test fun wmzUsesItsValidatedInnerWmfImageIdentity() {
+        val bytes = encodedWmf()
+        assertEquals("image/wmf", FileMagicDetector.detectFromStream("icon.wmz", "image/wmf", bytes.size.toLong()) {
+            bytes.inputStream()
+        }?.mimeType)
+        val file = java.io.File.createTempFile("wmz-thumbnail", ".wmz")
+        try {
+            file.writeBytes(bytes)
+            assertEquals("image/wmf", FileMagicDetector.detect(file)?.mimeType)
+        } finally {
+            file.delete()
         }
     }
 }
