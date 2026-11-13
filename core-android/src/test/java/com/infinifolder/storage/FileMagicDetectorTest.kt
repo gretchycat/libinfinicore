@@ -83,6 +83,15 @@ class FileMagicDetectorTest {
     }
 
     @Test
+    fun zipMagicDoesNotEraseRegisteredDocumentPackageIdentity() {
+        val docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        assertEquals(docx, FileMagicDetector.validatedExtensionMime("report.docx", docx,
+            FileMagicResult("application/zip", "ZIP Archive", isArchiveOrDiscImage = true)))
+        assertEquals("application/zip", FileMagicDetector.validatedExtensionMime("report.txt", "text/plain",
+            FileMagicResult("application/zip", "ZIP Archive", isArchiveOrDiscImage = true)))
+    }
+
+    @Test
     fun testDiscImageMagicDetection() {
         val ext4File = tempFolder.newFile("rootfs.bin")
         val ext4Bytes = ByteArray(2048)

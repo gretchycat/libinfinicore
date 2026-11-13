@@ -52,10 +52,16 @@ object FileMagicDetector {
         if (actual == null) return "application/octet-stream"
         if (actual == candidate) return candidate
         if (actual == "application/zip") {
-            if (candidate in PARSER_VALIDATED_ZIP_DOCUMENT_MIMES) return actual
+            // The ZIP signature confirms the container, while the registered
+            // package/format parser owns the document identity (DOCX/EPUB/ODF).
+            // Keep that identity so it reaches its reader; Browse archive stays
+            // available as a separate user action.
+            if (com.infinifolder.mime.MimeRegistry.packageFormat(fileName, candidate)?.container == "zip")
+                return candidate
             if (com.infinifolder.archive.ArchiveFormats.packageMimeType(fileName)?.let(com.infinifolder.mime.MimeRegistry::normalize) == candidate)
                 return candidate
         }
+        if (declaresCompatibleMimeAlias(fileName, candidate, actual)) return candidate
         if (actual == "application/x-ole-storage" && candidate in LEGACY_OFFICE_MIMES) return candidate
         if ((actual == "image/tiff" && candidate == "image/x-adobe-dng") ||
             (actual == "image/jp2" && candidate == "image/jpx") ||
@@ -73,23 +79,34 @@ object FileMagicDetector {
     }
 
     private val LEGACY_OFFICE_MIMES = setOf("application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint")
-    private val PARSER_VALIDATED_ZIP_DOCUMENT_MIMES = setOf(
-        "application/epub+zip",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
-        "application/vnd.ms-word.document.macroenabled.12", "application/vnd.ms-word.template.macroenabled.12",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
-        "application/vnd.ms-excel.sheet.macroenabled.12", "application/vnd.ms-excel.template.macroenabled.12",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
-        "application/vnd.openxmlformats-officedocument.presentationml.template",
-        "application/vnd.ms-powerpoint.presentation.macroenabled.12",
-        "application/vnd.ms-powerpoint.slideshow.macroenabled.12", "application/vnd.ms-powerpoint.template.macroenabled.12",
-        "application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.text-template",
-        "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.spreadsheet-template",
-        "application/vnd.oasis.opendocument.presentation", "application/vnd.oasis.opendocument.presentation-template"
-    )
+
+    private data class CompatibleMimeAliases(val revision: Long, val byExtension: Map<String, Set<Pair<String, String>>>)
+    @Volatile private var compatibleMimeAliases: CompatibleMimeAliases? = null
+
+    /** Use same-module extension declarations to reconcile MIME aliases without another static type table. */
+    private fun declaresCompatibleMimeAlias(fileName: String, candidate: String, actual: String): Boolean {
+        val extension = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        if (extension.isEmpty()) return false
+        val runtime = io.github.gretchycat.infinistream.RuntimeCapabilities.installed()
+        val aliases = compatibleMimeAliases?.takeIf { it.revision == runtime.revision } ?: synchronized(this) {
+            compatibleMimeAliases?.takeIf { it.revision == runtime.revision } ?: run {
+                val byExtension = runtime.registeredHandlers(io.github.gretchycat.infinistream.Operations.IDENTIFY)
+                    .flatMap { it.describe().formats }
+                    .flatMap { format ->
+                        val mimes = format.mimeTypes.map(com.infinifolder.mime.MimeRegistry::normalize)
+                            .filterNot { it.contains('*') }.distinct()
+                        if (mimes.size < 2) emptyList() else format.extensions.flatMap { ext ->
+                            mimes.flatMap { left -> mimes.map { right ->
+                                ext.lowercase(Locale.ROOT) to (left to right)
+                            } }
+                        }
+                    }.groupBy({ it.first }, { it.second })
+                    .mapValues { (_, pairs) -> pairs.toSet() }
+                CompatibleMimeAliases(runtime.revision, byExtension).also { compatibleMimeAliases = it }
+            }
+        }
+        return (candidate to actual) in aliases.byExtension[extension].orEmpty()
+    }
 
     fun detect(file: File, peekCompressedPayload: Boolean = false): FileMagicResult? {
         if (!file.exists() || !file.isFile || !file.canRead()) return null
