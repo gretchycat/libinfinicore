@@ -8,12 +8,13 @@ object NetworkConnectionStatus {
     data class Key(val providerId: String, val connectionId: String)
     data class Target(val key: Key, val path: String)
     private data class Access(val version: Long, val unavailable: Boolean)
-    enum class State { UNKNOWN, CONNECTED, DISCONNECTED, RECONNECTING }
+    enum class State { UNKNOWN, CONNECTING, CONNECTED, DISCONNECTED, RECONNECTING }
     data class Request internal constructor(val key: Key, val version: Long)
     private class Entry {
         var sequence = 0L
         var resultVersion = 0L
         var state = State.UNKNOWN
+        val connecting = mutableSetOf<Long>()
         val reconnects = mutableSetOf<Long>()
         val targets = object : LinkedHashMap<String, Access>(256, .75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Access>?) = size > 256
@@ -24,8 +25,11 @@ object NetworkConnectionStatus {
     private val listeners = CopyOnWriteArraySet<(Key) -> Unit>()
     fun addListener(listener: (Key) -> Unit) { listeners.add(listener) }
     fun removeListener(listener: (Key) -> Unit) { listeners.remove(listener) }
-    private fun state(entry: Entry): State = if (entry.reconnects.any { it > entry.resultVersion })
-        State.RECONNECTING else entry.state
+    private fun state(entry: Entry): State = when {
+        entry.reconnects.any { it > entry.resultVersion } -> State.RECONNECTING
+        entry.connecting.isNotEmpty() && entry.state != State.CONNECTED -> State.CONNECTING
+        else -> entry.state
+    }
     fun state(key: Key): State = synchronized(lock) { entries[key]?.let(::state) ?: State.UNKNOWN }
     fun state(target: Target): State = synchronized(lock) {
         val entry = entries[target.key] ?: return@synchronized State.UNKNOWN
@@ -68,6 +72,7 @@ object NetworkConnectionStatus {
             val entry = entries.getOrPut(key, ::Entry)
             val previous = state(entry)
             request = Request(key, ++entry.sequence)
+            entry.connecting.add(request.version)
             if (reconnect || indicateRetry && (previous == State.DISCONNECTED || previous == State.RECONNECTING))
                 entry.reconnects.add(request.version)
             changed = state(entry) != previous
@@ -81,6 +86,7 @@ object NetworkConnectionStatus {
         val changed = synchronized(lock) {
             val entry = entries.getValue(request.key)
             val previous = state(entry)
+            entry.connecting.remove(request.version)
             entry.reconnects.remove(request.version)
             if (result != null && request.version >= entry.resultVersion) {
                 entry.state = result
