@@ -32,7 +32,7 @@ python3 scripts/fetch-dependencies.py
 
 Only libinfinistream is fetched. No sibling checkout is used. Original source
 provenance is gretchycat/libinfinistore (the extraction is recorded in its Git
-history). See LICENSE.md for original-code license status; third-party license
+history). Original code is licensed under MIT; see LICENSE.md. Third-party license
 terms continue to apply.
 
 ## Separation audit update
