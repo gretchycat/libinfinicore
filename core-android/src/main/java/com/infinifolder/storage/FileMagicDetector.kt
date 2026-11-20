@@ -370,7 +370,7 @@ object FileMagicDetector {
             return FileMagicResult("application/x-guitar-pro", "Guitar Pro 3 Score")
         if (header.size >= 4 && String(header, 0, 4, StandardCharsets.US_ASCII) == "MSCF")
             return FileMagicResult("application/vnd.ms-cab-compressed", "Microsoft Cabinet Archive", true)
-        if (header.size >= 4 && header[0] == 0x60.toByte() && header[1] == 0xea.toByte())
+        if (hasValidArjHeader(header))
             return FileMagicResult("application/x-arj", "ARJ Archive", true)
         if (header.size >= 1028) {
             val signature = ((header[1024].toInt() and 255) shl 8) or (header[1025].toInt() and 255)
@@ -1066,6 +1066,19 @@ object FileMagicDetector {
             cursor = skipValue(cursor, 1) ?: return false
         }
         return false
+    }
+
+    // ARJ's two-byte marker also occurs in executable/ROM data. Require the
+    // complete main header, its declared bounds and CRC before claiming a container.
+    private fun hasValidArjHeader(bytes: ByteArray): Boolean {
+        if (bytes.size < 38 || u8(bytes, 0) != 0x60 || u8(bytes, 1) != 0xea) return false
+        val size = u16le(bytes, 2)
+        if (size !in 30..2600 || bytes.size < size + 8) return false
+        val basicSize = u8(bytes, 4)
+        if (basicSize !in 30..size || u8(bytes, 10) != 2) return false // main-header file type
+        val crc = java.util.zip.CRC32().apply { update(bytes, 4, size) }.value
+        val expected = (0..3).fold(0L) { value, i -> value or (u8(bytes, size + 4 + i).toLong() shl (8 * i)) }
+        return crc == expected
     }
 
     private val identifying=ThreadLocal.withInitial {false}

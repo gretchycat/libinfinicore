@@ -42,3 +42,8 @@ Original resource types and package names are retained. Core is the owner of the
 ## Compressed format identity
 
 Registered format validators run before generic compressor classification for compressed files/streams. A verified SVGZ image can therefore retain its image identity while arbitrary gzip remains a compressed container. Core continues to depend only on Stream and its declared platform/compression adapters; image validation remains in Canvas through the capability interface.
+
+ARJ identification requires a complete main header with valid length, main-header
+file type and CRC32. The two-byte marker alone is insufficient. Numbered ARJ
+volume suffixes overlap other file types and remain filename candidates only;
+callers must verify content before automatically browsing a container.

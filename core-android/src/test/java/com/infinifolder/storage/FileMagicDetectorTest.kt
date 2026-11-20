@@ -13,6 +13,34 @@ class FileMagicDetectorTest {
     val tempFolder = TemporaryFolder()
 
     @Test
+    fun arjMarkerInRomDataDoesNotIdentifyAnArchive() {
+        val rom = ByteArray(4096) { 0x60.toByte() }
+        rom[0] = 0x60; rom[1] = 0xea.toByte()
+        for (name in listOf("game.a26", "game.a52", "game.a78", "boot.img")) {
+            val result = FileMagicDetector.detectFromStream(name, "application/x-arj", rom.size.toLong()) { rom.inputStream() }
+            assertFalse("$name was mistaken for ARJ", result?.mimeType == "application/x-arj")
+        }
+    }
+
+    @Test
+    fun arjMainHeaderRequiresBoundsTypeAndChecksum() {
+        val bytes = ByteArray(42)
+        bytes[0] = 0x60; bytes[1] = 0xea.toByte(); bytes[2] = 32
+        bytes[4] = 30; bytes[5] = 3; bytes[6] = 1; bytes[10] = 2
+        fun checksum() {
+            val crc = java.util.zip.CRC32().apply { update(bytes, 4, 32) }.value
+            for (i in 0..3) bytes[36 + i] = (crc ushr (i * 8)).toByte()
+        }
+        checksum()
+        assertEquals("application/x-arj", FileMagicDetector.detectFromBytes(bytes)?.mimeType)
+        assertFalse(FileMagicDetector.detectFromBytes(bytes.copyOf(37))?.mimeType == "application/x-arj")
+        bytes[12] = 1
+        assertFalse(FileMagicDetector.detectFromBytes(bytes)?.mimeType == "application/x-arj")
+        bytes[10] = 0; checksum()
+        assertFalse(FileMagicDetector.detectFromBytes(bytes)?.mimeType == "application/x-arj")
+    }
+
+    @Test
     fun testAmbiguityDetection() {
         assertTrue(FileMagicDetector.isAmbiguousOrUnknown("mystery_file", "application/octet-stream"))
         assertTrue(FileMagicDetector.isAmbiguousOrUnknown("data.bin", "application/octet-stream"))
