@@ -12,7 +12,7 @@ enum class FileNameRules { VFAT, DOS_8_3 }
 data class FileSystemInfo(val type: String?, val maxFileSizeBytes: Long?, val evidence: String,
     val nameRules: FileNameRules? = null, val caseSensitive: Boolean? = null,
     val availableBytes: Long? = null, val readOnly: Boolean? = null,
-    val allocationUnitBytes: Long? = null) {
+    val allocationUnitBytes: Long? = null, val totalBytes: Long? = null) {
     val displayName: String get() = when (type?.lowercase(Locale.ROOT)) {
         "vfat", "fat" -> "FAT (VFAT/FAT32 family)"
         "fat32" -> "FAT32"
@@ -121,14 +121,21 @@ object StorageFileSystems {
             "ro" in fields[5].split(',') || "ro" in fields.getOrNull(separator + 3).orEmpty().split(','))
     }.toList()
     private fun mounts(): List<Mount> = runCatching { parseMountInfo(File("/proc/self/mountinfo").readText()) }.getOrDefault(emptyList())
-    private fun info(mount: Mount): FileSystemInfo = FileSystemInfo(mount.type,
-        if (mount.type in setOf("vfat", "msdos", "fat", "fat32")) FileSystemInfo.FAT_MAX_FILE_SIZE else null,
-        "mountinfo:${mount.path}", nameRules = when (mount.type) {
-            "msdos" -> FileNameRules.DOS_8_3
-            "vfat", "fat", "fat32" -> FileNameRules.VFAT
-            else -> null
-        }, caseSensitive = if (mount.type in setOf("vfat", "msdos", "fat", "fat32", "exfat")) false else null,
-        availableBytes = runCatching { android.os.StatFs(mount.path).availableBytes }.getOrNull(), readOnly = mount.readOnly)
+    private fun diskSpace(path: String): Pair<Long?, Long?> {
+        val stats = runCatching { android.os.StatFs(path) }.getOrNull() ?: return null to null
+        return stats.availableBytes to stats.totalBytes
+    }
+    private fun info(mount: Mount): FileSystemInfo {
+        val (availableBytes, totalBytes) = diskSpace(mount.path)
+        return FileSystemInfo(mount.type,
+            if (mount.type in setOf("vfat", "msdos", "fat", "fat32")) FileSystemInfo.FAT_MAX_FILE_SIZE else null,
+            "mountinfo:${mount.path}", nameRules = when (mount.type) {
+                "msdos" -> FileNameRules.DOS_8_3
+                "vfat", "fat", "fat32" -> FileNameRules.VFAT
+                else -> null
+            }, caseSensitive = if (mount.type in setOf("vfat", "msdos", "fat", "fat32", "exfat")) false else null,
+            availableBytes = availableBytes, readOnly = mount.readOnly, totalBytes = totalBytes)
+    }
     private fun volumeMount(volume: String, mounts: List<Mount>): Mount? {
         if (volume == "primary" || !volume.matches(Regex("[A-Za-z0-9_-]+"))) return null
         val paths = setOf("/mnt/media_rw/$volume", "/storage/$volume", "/mnt/runtime/default/$volume",
@@ -144,8 +151,14 @@ object StorageFileSystems {
             runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
         } ?: return FileSystemInfo(null, null, "No external-storage volume identity")
         val volume = documentId.substringBefore(':')
-        return volumeMount(volume, mounts())?.let(::info)
-            ?: FileSystemInfo(null, null, "Underlying mount not visible for volume $volume")
+        volumeMount(volume, mounts())?.let { return info(it) }
+        val path = if (volume == "primary") android.os.Environment.getExternalStorageDirectory().absolutePath
+            else "/storage/$volume"
+        val (availableBytes, totalBytes) = diskSpace(path)
+        return if (availableBytes != null && totalBytes != null) {
+            FileSystemInfo(null, null, "StatFs for external-storage volume $volume",
+                availableBytes = availableBytes, totalBytes = totalBytes)
+        } else FileSystemInfo(null, null, "Underlying mount not visible for volume $volume")
     }
     fun forFile(file: File): FileSystemInfo {
         val path = runCatching { file.canonicalPath }.getOrDefault(file.absolutePath)
@@ -158,14 +171,16 @@ object StorageFileSystems {
         }
         if (direct != null && direct.type !in setOf("fuse", "sdcardfs", "tmpfs")) return info(direct)
         val type = runCatching { java.nio.file.Files.getFileStore(file.toPath()).type() }.getOrNull()
+        val (availableBytes, totalBytes) = diskSpace(path)
         if (type != null && type.lowercase(Locale.ROOT) !in setOf("fuse", "sdcardfs", "tmpfs")) {
             return FileSystemInfo(type, if (type.lowercase(Locale.ROOT) in setOf("vfat", "msdos", "fat", "fat32"))
                 FileSystemInfo.FAT_MAX_FILE_SIZE else null, "FileStore", nameRules = when (type.lowercase(Locale.ROOT)) {
                     "msdos" -> FileNameRules.DOS_8_3
                     "vfat", "fat", "fat32" -> FileNameRules.VFAT
                     else -> null
-                })
+                }, availableBytes = availableBytes, totalBytes = totalBytes)
         }
-        return FileSystemInfo(null, null, "Underlying filesystem not exposed by Android")
+        return FileSystemInfo(null, null, "Underlying filesystem not exposed by Android",
+            availableBytes = availableBytes, totalBytes = totalBytes)
     }
 }

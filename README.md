@@ -15,6 +15,12 @@ contracts. A caller must close each returned stream/device. Capability results
 retain supported, unsupported, and unknown states; permission and I/O failures
 are not an invitation to fall back to a less restrictive path.
 
+`FileSystemInfo` reports `availableBytes` and `totalBytes` independently when a
+provider can identify them. Unknown capacity remains `null`; implementations do
+not estimate it from directory contents. Android local and recognized external
+storage paths use `StatFs`, while mounted filesystem adapters may report the
+capacity available from their on-disk metadata.
+
 Applications normally use libinfiniselect for external storage selection.
 This support library exists for the shared viewer UI and Infinifolder internals;
 libinfiniselect does not depend on it.
